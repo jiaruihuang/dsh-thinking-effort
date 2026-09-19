@@ -67,7 +67,7 @@ With the switch on and no `format` configured, the Host sends `x-opencode-sessio
 
 The guarantees this provides:
 
-- **Stable within one session** — the same DSH session always sends the same value (per-session sticky cache); resumed sessions keep the same 14-character tail, and only the hex timestamp is re-minted after a DSH restart in `firstUse` mode.
+- **Stable within one session** — the same DSH session always sends the same value (per-session sticky cache); cache eviction keeps the first-use mint, so an evicted session gets the same value again when revisited; resumed sessions keep the same 14-character tail, and only the hex timestamp is re-minted after a DSH restart in `firstUse` mode.
 - **Different between sessions** — every subagent run derives its own distinct value, so no two conversations collapse into one upstream session.
 - **Bound to the DSH session id** — the same session id always derives the same suffix, on any machine, with no stored value.
 - **Format-compliant** — the result matches `^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$` (30 characters total).
@@ -140,6 +140,37 @@ Changing the `format` config re-derives the value on the next request of a sessi
 - The setting works through both the modern Remote Settings transport and the legacy `connection.api.settings` transport, and does not change the route's `api` protocol.
 - If the request passes through Sub2API, CPA, or another forwarding gateway, verify that it preserves and forwards `x-opencode-session` to the OpenCode upstream. A static route setting such as `llm-pi-ai.providers.<route>.headers.x-opencode-session` is not equivalent because one fixed value is shared by all conversations.
 
+## OpenCode user-agent override
+
+The `llm-pi-ai` adapter forces its own attribution `user-agent` (`deepseek-harness/<version> (+https://github.com/deepseek-ai/deepseek-harness)`) onto every provider request and strips any provider-configured value with the same name, so `llm-pi-ai.providers.<route>.headers.user-agent` has no effect. This plugin rewrites the header on the matching `llm/stream` request at the last layer before it leaves, which is the only place a rewrite survives.
+
+It is configured under `dsh-thinking-effort.opencodeSession.userAgent` and is off by default:
+
+```yaml
+dsh-thinking-effort:
+  opencodeSession:
+    userAgent:
+      value: "opencode/1.18.31 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14"
+      providers:
+        opencode-go:
+          enabled: true              # every model on this route
+        sundrawnewapi-private:
+          value: "opencode/1.18.31"  # optional per-route value
+          models:
+            mimo-v2.5-free: true     # exact model toggle
+```
+
+| Field | Meaning |
+| --- | --- |
+| `userAgent.value` | Master value and the enable switch. Empty or absent turns the override off everywhere. |
+| `userAgent.providers.<route>.enabled` | `true` applies the override to every model on that route. |
+| `userAgent.providers.<route>.models.<model>` | `true` applies it to that exact model only. |
+| `userAgent.providers.<route>.value` | Optional route-specific value; wins over the master `value`. |
+
+Resolution order for one request: the route must match by `enabled` or an exact model toggle, then the route `value` is used when non-empty, otherwise the master `value`. Requests that do not match keep DSH's attribution `user-agent`, so only the routes you opt in are affected. Custom providers work by their configured route name with no extra registration. The override composes with the session Header on the same request, and an explicit caller `user-agent` is still overwritten because the whole point is to defeat the adapter.
+
+Restart DSH after changing Host code or the package; the configuration itself is re-read on settings changes.
+
 ## Gateway compatibility settings
 
 The provider global area in the Settings page edits the default `compat` values for every model under that provider. Expanding one model opens its single-model area. The four groups are collapsed by default.
@@ -181,6 +212,14 @@ Field-by-field, each value resolves independently in this order: model → provi
 
 The current DSH Settings API does not support array-index path operations. `modelOverrides` edits therefore use field-level `set`/`unset` operations and touch only the selected field. A `models[]` edit writes one complete `providers.<route>.models` array set, preserving other model entries, unknown fields, and compat fields. These values are control plane configuration only; an external transport remains responsible for network requests.
 
+### Snapshot import trust model
+
+A snapshot carries **capability configuration** — reasoning efforts, compat switches, which models enable the session Header — and is safe to move between machines. An export also contains **deployment wiring** verbatim: a provider's `baseURL`, `apiKeyEnv`, and `headers`, plus `opencodeSession.format.script`. Import withholds those fields by default, so a file from someone else cannot redirect your requests, attach their credential name, inject a raw header, or name a local module for the Host to import and execute. The exported file still holds every value as written, including a plaintext token kept in `headers` — check it before sharing.
+
+When a file does try to change wiring, the preview says how many entries were skipped and offers **Also import endpoints and credentials (advanced)**, which is off for every import and never remembered. The warning lists the target endpoint for each affected route so the destination is visible before you consent.
+
+Restoring a rollback copy or a saved profile follows the same rule. If you previously imported wiring with the opt-in and need to restore an old endpoint, re-check the box in that preview.
+
 ## 1. Official installation
 
 Install the latest version:
@@ -192,7 +231,7 @@ dsh plugin --profile <profile> add @hytime/dsh-thinking-effort
 Install the current release explicitly:
 
 ```bash
-dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.0
+dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.1
 ```
 
 The official CLI updates the profile dependency, lockfile, and `dsh.profile.bundles` automatically. Do not add a manual YAML row.
@@ -208,7 +247,7 @@ dsh plugin --profile <profile> update @hytime/dsh-thinking-effort
 Upgrade to a specific version:
 
 ```bash
-dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.0
+dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.1
 ```
 
 Restart DSH for host changes and refresh the Web page for client changes.
@@ -226,7 +265,7 @@ If the old dependency still exists, use the official commands:
 
 ```bash
 dsh plugin --profile <profile> remove dsh-thinking-effort
-dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.0
+dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.1
 ```
 
 If the dependency was removed by another tool but the old bundle remains, inspect the composed profile:
@@ -240,7 +279,7 @@ If it still contains `name: dsh-thinking-effort`, find the old GitHub commit in 
 ```bash
 dsh plugin --profile <profile> add github:hytime/dsh-thinking-effort#<old-commit>
 dsh plugin --profile <profile> remove dsh-thinking-effort
-dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.0
+dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.1
 ```
 
 Do not add the old package name to a new bundle list.
@@ -255,7 +294,7 @@ grep -n "@hytime/dsh-thinking-effort" \
 node -p "require('${DSH_HOME:-$HOME/.dsh}/profiles/<profile>/node_modules/@hytime/dsh-thinking-effort/package.json').version"
 ```
 
-The version must be `0.3.0` for this release.
+The version must be `0.3.1` for this release.
 
 ## Japanese and Korean support status
 

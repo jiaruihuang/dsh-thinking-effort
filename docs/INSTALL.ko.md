@@ -67,7 +67,7 @@ OpenCode 세션 Header는 모델 편집기의 모델별 설정이며 provider �
 
 이로 얻는 보장:
 
-- **세션 내에서 일정** — 같은 DSH 세션은 항상 같은 값을 보냅니다(세션별 스티키 캐시). 재개한 세션은 같은 14자리 접미사를 유지하며, `firstUse` 모드에서는 DSH 재시작 후 16진 타임스탬프만 다시 주조됩니다.
+- **세션 내에서 일정** — 같은 DSH 세션은 항상 같은 값을 보냅니다(세션별 스티키 캐시). 캐시 축출 시에도 첫 주조는 유지되므로, 축출된 세션을 다시 방문해도 같은 값을 얻습니다. 재개한 세션은 같은 14자리 접미사를 유지하며, `firstUse` 모드에서는 DSH 재시작 후 16진 타임스탬프만 다시 주조됩니다.
 - **세션 간에 다름** — 각 subagent 실행이 독립적인 값을 파생하므로 여러 대화가 하나의 upstream 세션으로 뭉개지지 않습니다.
 - **DSH 세션 ID에 바인딩** — 같은 세션 ID는 어떤 머신에서도 같은 접미사를 파생하며 저장된 값이 필요 없습니다.
 - **형식 준수** — 결과가 `^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$`(총 30자)에 일치합니다.
@@ -140,6 +140,37 @@ export function format(ctx) {
 - 이 설정은 최신 Remote Settings transport와 이전 `connection.api.settings` transport를 모두 지원하며 route의 `api` 프로토콜은 변경하지 않습니다.
 - 요청이 Sub2API, CPA 또는 다른 forwarding gateway를 통과한다면 `x-opencode-session`을 보존하여 OpenCode upstream으로 전달하는지 확인하세요. `llm-pi-ai.providers.<route>.headers.x-opencode-session`과 같은 정적 route 설정은 모든 대화가 같은 고정 값을 공유하므로 대체할 수 없습니다.
 
+## OpenCode user-agent 재정의
+
+`llm-pi-ai` adapter는 모든 provider 요청에 자체 attribution `user-agent`(`deepseek-harness/<버전> (+https://github.com/deepseek-ai/deepseek-harness)`)를 강제하고 같은 이름의 provider 설정 값을 제거합니다. 따라서 `llm-pi-ai.providers.<route>.headers.user-agent`는 효과가 없습니다. 이 플러그인은 일치하는 `llm/stream` 요청에서 전송 직전의 마지막 레이어에서 헤더를 다시 씁니다. 이것이 유일하게 살아남는 재정의 지점입니다.
+
+`dsh-thinking-effort.opencodeSession.userAgent`에서 설정하며 기본값은 꺼져 있습니다.
+
+```yaml
+dsh-thinking-effort:
+  opencodeSession:
+    userAgent:
+      value: "opencode/1.18.31 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14"
+      providers:
+        opencode-go:
+          enabled: true              # 이 route의 모든 모델
+        sundrawnewapi-private:
+          value: "opencode/1.18.31"  # 선택적인 route별 값
+          models:
+            mimo-v2.5-free: true     # 정확한 모델 토글
+```
+
+| 필드 | 의미 |
+| --- | --- |
+| `userAgent.value` | 마스터 값이자 활성화 스위치. 비어 있거나 없으면 전체에서 꺼집니다. |
+| `userAgent.providers.<route>.enabled` | `true`면 해당 route의 모든 모델에 적용됩니다. |
+| `userAgent.providers.<route>.models.<model>` | `true`면 해당 정확한 모델에만 적용됩니다. |
+| `userAgent.providers.<route>.value` | 선택적인 route별 값. 비어 있지 않으면 마스터 값보다 우선합니다. |
+
+요청 하나의 해석 순서: route가 `enabled` 또는 정확한 모델 토글로 일치해야 하며, 다음으로 비어 있지 않은 route별 `value`, 없으면 마스터 `value`를 사용합니다. 일치하지 않는 요청은 DSH attribution `user-agent`를 유지하므로 명시적으로 선택한 route만 영향받습니다. 커스텀 provider는 설정한 route 이름을 그대로 키로 쓰면 되며 추가 등록이 필요 없습니다. 이 재정의는 같은 요청의 세션 Header와 함께 쓸 수 있고, 호출자가 명시적으로 지정한 `user-agent`도 덮어씁니다(adapter를 우회하는 것이 목적이므로).
+
+Host 또는 플러그인 패키지를 변경한 뒤에는 DSH를 재시작하세요. 설정 자체는 설정 변경 시 다시 읽힙니다.
+
 ## 게이트웨이 호환성 설정
 
 Settings의 provider 전역 영역에서는 해당 provider 아래 모든 모델의 `compat` 기본값을 수정합니다. 모델 하나를 펼치면 단일 모델 영역이 열립니다. 4개 그룹은 기본으로 접혀 있습니다.
@@ -181,6 +212,14 @@ providers:
 
 현재 DSH Settings API는 배열 인덱스 path op를 지원하지 않습니다. 따라서 `modelOverrides` 편집은 필드 단위 `set`/`unset`을 사용해 선택한 필드만 변경합니다. `models[]` 저장은 `providers.<route>.models` 전체를 하나의 배열 set으로 기록하며 다른 모델 항목, 알 수 없는 필드 및 다른 compat 필드를 보존합니다. 런타임 schema가 노출하지 않는 필드는 표시되지 않습니다. 이 값은 제어면 설정만 담당하며 네트워크 요청은 외부 transport가 처리합니다.
 
+### 스냅샷 가져오기 신뢰 모델
+
+스냅샷에는 추론 강도, 호환성 스위치, 세션 Header를 활성화하는 모델 등 **capability 설정**이 포함되며 머신 간에 안전하게 이동할 수 있습니다. 내보낸 파일에는 **배포 연결 설정**도 그대로 담깁니다. provider의 `baseURL`, `apiKeyEnv`, `headers`와 `opencodeSession.format.script`가 여기에 해당합니다. 가져올 때는 이 필드들이 기본적으로 보류되므로 다른 사람이 만든 파일이 요청을 다른 곳으로 보내거나, 상대방의 자격 증명 이름을 연결하거나, 원시 Header를 주입하거나, Host가 가져와 실행할 로컬 모듈을 지정할 수 없습니다. 다만 내보낸 파일은 `headers`에 둔 평문 token을 포함해 모든 값을 그대로 보관합니다. 공유하기 전에 반드시 내용을 확인하세요.
+
+파일이 연결 설정을 변경하려고 하면 미리보기에 건너뛴 항목 수가 표시되고 **Also import endpoints and credentials (advanced)** 옵션이 제공됩니다. 이 옵션은 매번 꺼진 상태로 시작하며 이전 선택을 기억하지 않습니다. 경고에는 영향을 받는 각 route의 대상 엔드포인트가 표시되므로 동의하기 전에 요청 목적지를 확인할 수 있습니다.
+
+롤백 복사본을 복원하거나 저장된 프로필을 적용할 때도 같은 규칙이 적용됩니다. 이전에 opt-in으로 연결 설정을 가져왔고 오래된 endpoint를 복원해야 한다면 해당 미리보기에서 다시 선택하세요.
+
 ## 1. 공식 설치
 
 최신 버전을 설치합니다.
@@ -192,7 +231,7 @@ dsh plugin --profile <profile> add @hytime/dsh-thinking-effort
 현재 릴리스 버전을 명시하여 설치합니다.
 
 ```bash
-dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.0
+dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.1
 ```
 
 공식 CLI가 profile 의존성, lockfile 및 `dsh.profile.bundles`를 자동으로 업데이트합니다. YAML 행을 수동으로 추가하지 마세요.
@@ -208,7 +247,7 @@ dsh plugin --profile <profile> update @hytime/dsh-thinking-effort
 특정 버전으로 업데이트하려면 다음을 사용합니다.
 
 ```bash
-dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.0
+dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.1
 ```
 
 Host 변경에는 DSH를 재시작하고 Client 변경에는 Web 페이지를 새로 고치세요.
@@ -226,7 +265,7 @@ github:hytime/dsh-thinking-effort
 
 ```bash
 dsh plugin --profile <profile> remove dsh-thinking-effort
-dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.0
+dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.1
 ```
 
 다른 도구로 의존성을 제거했지만 이전 bundle이 남아 있으면 composition을 확인합니다.
@@ -240,7 +279,7 @@ dsh --profile <profile> --dump-default-config
 ```bash
 dsh plugin --profile <profile> add github:hytime/dsh-thinking-effort#<old-commit>
 dsh plugin --profile <profile> remove dsh-thinking-effort
-dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.0
+dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.1
 ```
 
 새 bundle 목록에 이전 패키지 이름을 추가하지 마세요.
@@ -255,7 +294,7 @@ grep -n "@hytime/dsh-thinking-effort" \
 node -p "require('${DSH_HOME:-$HOME/.dsh}/profiles/<profile>/node_modules/@hytime/dsh-thinking-effort/package.json').version"
 ```
 
-이 릴리스의 버전은 `0.3.0`이어야 합니다.
+이 릴리스의 버전은 `0.3.1`이어야 합니다.
 
 ## 일본어 및 한국어 지원 상태
 

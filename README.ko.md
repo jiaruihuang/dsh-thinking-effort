@@ -66,6 +66,7 @@ DSH 내장 모델만 사용하고 이미 추론 제어가 정상 작동한다면
 | 모델별 편집 | Settings에서 단계를 설정하고 catalog/modelOverrides와 `models[]` 항목의 게이트웨이 호환 값을 모두 편집 |
 | 게이트웨이 호환 설정 | 15개의 일반적인 스칼라 필드를 provider 전체 또는 모델별로 설정하며, 역할/추론, 형식/출력, 스트리밍/도구, 저장/캐시로 나뉘고 기본으로 접혀 있음 |
 | OpenCode 세션 Header | 정확한 모델에만 동적 `x-opencode-session`을 활성화합니다. 기본값은 DSH 세션에 묶인 결정적 `ses_` 값을 생성하며(template / expression / script 모드로 상류 형식 변경에 대응), 고정 Header 값을 저장하지 않습니다 |
+| OpenCode user-agent 재정의 | provider/model(커스텀 route 포함) 단위로 `user-agent`를 다시 써서 상류 클라이언트를 흉내냅니다. route별 값도 설정 가능하며 기본값은 꺼져 있습니다 |
 | 게이트웨이 값 매핑 | DSH에서 `high`를 선택하면 `ultra` 전송 가능 |
 | 설정 백업 및 프로필 | 현재 설정을 JSON 파일로 내보내 이전에 활용하고, 이름 있는 프로필을 저장해 전환합니다. 가져오기 전에 병합 또는 교체를 선택하고 영향을 미리 확인합니다 |
 | Subagent 기본값 | 명시적 값이 없는 요청에만 기본값 적용 |
@@ -81,7 +82,7 @@ profile은 공식 DSH CLI로 관리하세요. 일반 `npm install`은 DSH profil
 dsh plugin --profile <profile> add @hytime/dsh-thinking-effort
 
 # 특정 버전 설치
-dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.0
+dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.1
 
 # 업데이트
 dsh plugin --profile <profile> update @hytime/dsh-thinking-effort
@@ -140,7 +141,7 @@ Settings의 provider 전역 영역에서는 해당 provider 아래 모든 모델
 
 모델 편집기에는 별도의 **OpenCode 세션 Header** 스위치가 있습니다. 기본값은 꺼져 있으며 `llm-pi-ai.compat`가 아니라 플러그인 전용 `dsh-thinking-effort` Settings namespace에 저장됩니다. `x-opencode-session`이 필요한 정확한 `provider/model`에만 활성화하세요. 같은 route의 다른 모델(GPT 모델 포함)에는 상속되지 않습니다. 토글하면 즉시 저장되며 별도의 저장 버튼이 없습니다. 모델을 다시 열면 저장된 값이 표시됩니다.
 
-활성화했는데 `format`을 설정하지 않으면 Host는 `ses_` 정규 형태를 가지며 **현재 DSH 세션에서 결정적으로 파생된** 값을 보냅니다. `ses_` + 16진수 12자리(세션마다 한 번 주조되는 48비트 밀리초 타임스탬프) + Base62 14자리(정규화한 DSH 세션 ID의 80비트 SHA-256 다이제스트)입니다. 같은 DSH 세션은 항상 같은 값을 보내고, 다른 세션(각 subagent 실행 포함)은 서로 다른 값을 파생합니다. 14자리 접미사는 저장 값이 아니라 파생 값이므로 DSH 재시작 후에도 안정적입니다.
+활성화했는데 `format`을 설정하지 않으면 Host는 `ses_` 정규 형태를 가지며 **현재 DSH 세션에서 결정적으로 파생된** 값을 보냅니다. `ses_` + 16진수 12자리(세션마다 한 번 주조되는 48비트 밀리초 타임스탬프) + Base62 14자리(정규화한 DSH 세션 ID의 80비트 SHA-256 다이제스트)입니다. 같은 DSH 세션은 항상 같은 값을 보냅니다. 값은 세션별로 유지되며, 크기가 제한된 값 캐시의 축출은 캐시 값만 버리고 첫 주조는 절대 버리지 않으므로 축출된 세션을 다시 방문해도 값이 바뀌지 않습니다. 16진수 타임스탬프가 다시 주조되는 것은 DSH 재시작 후의 `firstUse` 모드뿐입니다(`time: hash`는 완전히 무상태). 14자리 접미사는 저장 값이 아니라 파생 값이므로 DSH 재시작 후에도 안정적입니다. 다른 세션(각 subagent 실행 포함)은 서로 다른 값을 파생합니다.
 
 생성기는 DSH 설정 문서의 `dsh-thinking-effort.opencodeSession.format`에서 설정하며, 상류 형식 변경에 플러그인 재빌드 없이 대응할 수 있는 4가지 모드를 제공합니다.
 
@@ -154,6 +155,31 @@ Settings의 provider 전역 영역에서는 해당 provider 아래 모든 모델
 
 Sub2API, CPA 및 다른 forwarding gateway는 `x-opencode-session`을 보존하여 OpenCode upstream으로 전달해야 합니다. `llm-pi-ai.providers.<route>.headers.x-opencode-session`과 같은 정적 route Header는 대체 수단이 아닙니다. 모든 대화가 하나의 값을 공유하므로 대화별 라우팅과 prompt-cache affinity를 제공할 수 없습니다. Host를 변경한 뒤에는 DSH를 재시작하고 Settings 또는 Client를 변경한 뒤에는 Web 페이지를 새로 고치세요.
 
+### OpenCode user-agent 재정의
+
+일부 상류는 `user-agent` 헤더도 검사합니다. `llm-pi-ai` adapter는 모든 provider 요청에 attribution `user-agent`(`deepseek-harness/…`)를 강제하고 provider 설정의 같은 이름 헤더를 제거하므로 DSH를 통해서는 바꿀 수 없습니다. 이 플러그인은 전송 직전 마지막 레이어에서 다시 씁니다. provider/model 단위로 적용되며 기본값은 꺼져 있습니다.
+
+```yaml
+dsh-thinking-effort:
+  opencodeSession:
+    userAgent:
+      value: "opencode/1.18.31 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14"
+      providers:
+        opencode-go:
+          enabled: true              # route 전체
+        sundrawnewapi-private:
+          value: "opencode/1.18.31"  # 선택적인 route별 값
+          models:
+            mimo-v2.5-free: true     # 정확한 모델
+```
+
+- `value`가 주 스위치입니다. 비어 있거나 없으면 전체에서 꺼집니다.
+- route의 `enabled`가 true(전체 모델)이거나 정확한 모델이 켜져 있으면 일치합니다. 커스텀 route는 provider 이름을 그대로 키로 씁니다.
+- route 자체의 `value`가 주 `value`보다 우선합니다.
+- 일치하지 않는 요청은 DSH attribution `user-agent`를 그대로 유지합니다.
+
+위의 세션 Header와 같은 요청 계층에서 동작하므로 둘 다 켜면 상류 클라이언트를 완전히 흉내낼 수 있습니다. 전체 참조는 [INSTALL.ko.md](./docs/INSTALL.ko.md)를 확인하세요. Host 변경 후에는 DSH를 재시작해야 합니다.
+
 ### 설정 백업 및 프로필
 
 **설정 백업 및 프로필** 카드는 언어 선택기와 **Subagent default effort** 카드 아래에 있으며, 현재 설정을 내보내고, 이름 있는 프로필을 저장해 전환하며, 이전에 내보낸 파일을 가져올 수 있습니다.
@@ -164,6 +190,8 @@ Sub2API, CPA 및 다른 forwarding gateway는 `x-opencode-session`을 보존하�
 4. 가져오기의 기본값은 **병합**(파일에 없는 설정 유지)입니다. **교체**는 직접 선택해야 하며 파일에 없는 provider를 삭제합니다. **가져오기 실행**은 먼저 현재 설정을 **가져오기 전 자동 백업**으로 저장한 뒤 변경을 기록합니다. 되돌릴 때도 같은 미리보기를 사용합니다.
 
 내보내기와 가져오기는 기존 Settings 채널을 그대로 사용하므로 최신 Remote Settings와 이전 `connection.api.settings`에서 모두 동작합니다. 결과에 재시작이 필요한 namespace가 표시되면 DSH를 재시작한 뒤 적용됩니다.
+
+스냅샷을 가져올 때 기본적으로 capability 설정만 마이그레이션합니다. provider의 `baseURL`, `apiKeyEnv`, `headers` 및 `opencodeSession.format.script`는 로컬 배포 연결 설정이므로, 미리보기에서 **Also import endpoints and credentials (advanced)**를 명시적으로 선택한 경우에만 적용됩니다.
 
 ### 설정 페이지 구성
 
@@ -176,7 +204,7 @@ Sub2API, CPA 및 다른 forwarding gateway는 `x-opencode-session`을 보존하�
 
 ## 작동 방식
 
-- **Host:** 시작 및 설정 변경 시 `llm-pi-ai`의 `models`와 `modelOverrides`를 검사하고 `reasoningEfforts`가 없는 경우에만 기본값을 추가합니다. 또한 모델별 OpenCode 세션 설정을 읽고 일치하는 `llm/stream` 요청에만 `opencodeSession.format`에 따라 생성(기본값 `ses-derive`)한 `x-opencode-session`을 주입합니다.
+- **Host:** 시작 및 설정 변경 시 `llm-pi-ai`의 `models`와 `modelOverrides`를 검사하고 `reasoningEfforts`가 없는 경우에만 기본값을 추가합니다. 또한 모델별 OpenCode 세션 설정을 읽고 일치하는 `llm/stream` 요청에만 `opencodeSession.format`에 따라 생성(기본값 `ses-derive`)한 `x-opencode-session`을 주입하며, `opencodeSession.userAgent`로 선택한 모델의 `user-agent`를 다시 씁니다(그 외에는 `llm-pi-ai` adapter의 attribution 헤더가 강제).
 - **Client:** DSH Settings Remote(`ctx.remote.settings`)와 locale service로 설정 페이지를 등록합니다. 모델 편집기는 OpenCode 세션 Header를 전용 namespace에 저장하며 `llm-pi-ai.compat`와 분리합니다. 사전은 `src/locales/ja.json`, `src/locales/ko.json` 등에서 관리하고 게시 전에 클라이언트 bundle로 생성합니다.
 - **Subagent:** `llm-pi-ai` 사용자 레이어에 `subagentEffort`를 저장합니다. `agent/request` waterfall은 명시적 값이 없는 요청에만 기본값을 추가합니다.
 - **기본값 없음:** 플러그인은 `off`, `high`, `max`를 자동으로 선택하지 않습니다. `reasoning`을 생략하고 게이트웨이 기본 동작을 따릅니다.

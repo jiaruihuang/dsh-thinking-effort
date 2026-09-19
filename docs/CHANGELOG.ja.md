@@ -10,13 +10,20 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-19
+
 ### 追加
 
 - 設定可能な OpenCode セッション Header 生成器（`opencodeSession.format`）を追加しました。スイッチを有効にして `format` 未設定の場合、Host は OpenCode Zen の正規形を持つ決定論的な `ses_` 値を送信します：`ses_` + 16 進 12 桁（セッションごとに 1 回鋳造する 48 ビットのミリ秒タイムスタンプ）+ Base62 14 桁（正規化した DSH セッション ID の 80 ビット SHA-256 ダイジェスト）。同じ DSH セッション内で値は一定で、別セッション（各 subagent 実行を含む）ごとに異なり、14 桁の接尾辞は DSH 再起動後も安定します。上流の形式変更に対応するため、`ses-derive` / `passthrough` / `template` / `expression` / `script` の 4 モード、`time: firstUse | hash` のタイムスタンプ由来、`validate` / `onInvalid` の検証を設定ドキュメントだけで変更でき、コード変更や再ビルドは不要です。
+- provider/model 単位の `user-agent` 上書き（`opencodeSession.userAgent`）を追加しました。`llm-pi-ai` アダプターが帰属 `user-agent` を強制し、provider 設定値を削除するため、このプラグインは送信直前の最後のレイヤーでヘッダーを書き換えます。ルート単位の `enabled`、モデル単位のトグル、任意のルート別 `value`（マスター値より優先）に対応し、既定は無効で、一致しないリクエストは DSH の帰属ヘッダーのままです。
 
 ### 変更
 
 - `x-opencode-session` の既定値が「生の DSH セッション ID」から「上流準拠の派生 `ses_` 値」に変わりました。旧動作が必要な場合は `format: { mode: passthrough }` を明示的に設定してください。
+
+### セキュリティ
+
+- 設定スナップショットの読み込みでは、provider の `baseURL`、`apiKeyEnv`、`headers` と `opencodeSession.format.script` を既定で適用しないようにしました。これらはローカル環境の接続設定であり、他人のファイルを読み込んでもリクエスト先を変更したり、Host が実行するローカルモジュールを指定したりできません。プレビューにはスキップした項目数が表示され、既定で無効かつ毎回リセットされる opt-in スイッチを提供します（issue #11）。
 
 ## [0.3.0] - 2026-09-16
 

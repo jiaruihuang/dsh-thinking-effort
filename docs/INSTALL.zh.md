@@ -73,7 +73,7 @@ OpenCode 会话 Header 是模型编辑器中的模型级设置，不是 provider
 
 由此得到的保证：
 
-- **会话内恒定**——同一 DSH 会话总是发送同一个值（按会话粘性缓存）；恢复的会话保留同样的 14 位后缀，只有 `firstUse` 模式下 DSH 重启后会重新铸造 hex 时间戳段。
+- **会话内恒定**——同一 DSH 会话总是发送同一个值（按会话粘性缓存）；缓存淘汰时保留首次铸造的铸币，被淘汰的会话再次访问仍得到同一个值；恢复的会话保留同样的 14 位后缀，只有 `firstUse` 模式下 DSH 重启后会重新铸造 hex 时间戳段。
 - **会话间不同**——每次子 agent 运行都会派生独立的值，不会把多个会话压缩进同一个上游会话。
 - **与会话 ID 绑定**——同一会话 ID 在任何机器上都派生同样的后缀，且无需保存任何值。
 - **格式合规**——结果匹配 `^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$`（共 30 个字符）。
@@ -146,6 +146,37 @@ export function format(ctx) {
 - 该设置同时支持新版 Remote Settings transport 和旧版 `connection.api.settings` transport，且不会修改路由的 `api` 协议。
 - 如果请求经过 Sub2API、CPA 或其他中转服务，请确认它保留 `x-opencode-session` 并继续转发给 OpenCode 上游。`llm-pi-ai.providers.<route>.headers.x-opencode-session` 这类静态 route 设置不能替代本功能，因为所有会话会共用一个固定值。
 
+## OpenCode user-agent 覆盖
+
+`llm-pi-ai` 适配器会在每个 provider 请求上强制盖上自己的归因 `user-agent`（`deepseek-harness/<版本> (+https://github.com/deepseek-ai/deepseek-harness)`），并删除 provider 配置的同名头，因此 `llm-pi-ai.providers.<route>.headers.user-agent` 不生效。本插件在匹配的 `llm/stream` 请求离开发送前的最后一层改写该 header——这也是唯一能存活的重写点。
+
+在 `dsh-thinking-effort.opencodeSession.userAgent` 下配置，默认关闭：
+
+```yaml
+dsh-thinking-effort:
+  opencodeSession:
+    userAgent:
+      value: "opencode/1.18.31 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14"
+      providers:
+        opencode-go:
+          enabled: true              # 该路由全部模型
+        sundrawnewapi-private:
+          value: "opencode/1.18.31"  # 可选的路由级值
+          models:
+            mimo-v2.5-free: true     # 精确模型开关
+```
+
+| 字段 | 含义 |
+| --- | --- |
+| `userAgent.value` | 主值兼总开关。为空或缺失时全局不生效。 |
+| `userAgent.providers.<route>.enabled` | `true` 表示该路由全部模型生效。 |
+| `userAgent.providers.<route>.models.<model>` | `true` 表示仅该精确模型生效。 |
+| `userAgent.providers.<route>.value` | 可选的路由级值；非空时优先于主值。 |
+
+单个请求的解析顺序：路由先按 `enabled` 或精确模型开关命中，然后取非空的路由级 `value`，否则用主 `value`。未命中的请求保持 DSH 的归因 `user-agent`，只有你显式选中的路由受影响。自定义 provider 直接用其路由名作为 key，无需额外登记。该覆盖与上面的会话 Header 作用于同一请求、可以叠加；调用方显式提供的 `user-agent` 也会被覆盖——这正是该功能的目的（绕过适配器）。
+
+修改 Host 或插件包后需重启 DSH；配置本身在设置变更时重新读取。
+
 ## 网关兼容设置
 
 设置页的 provider 全局区域用于修改该 provider 下全部模型的 `compat` 默认值。展开单个模型后进入单模型区域。4 组字段默认收起。
@@ -187,6 +218,14 @@ providers:
 
 当前 DSH Settings API 不支持数组索引 path op。因此，`modelOverrides` 修改使用字段级 `set`/`unset`，只操作选中的字段；`models[]` 修改通过一个完整的 `providers.<route>.models` 数组 set 写回，并保留其他模型条目、未知字段和其他 compat 字段。运行时 schema 未暴露的字段不会显示。这些值只属于控制面配置，网络请求仍由外部 transport 负责。
 
+### 快照导入信任模型
+
+快照包含**能力配置**：推理强度、兼容开关，以及哪些模型启用会话 Header，可以安全地在不同机器之间迁移。导出时，文件还会原样包含**部署接线**：provider 的 `baseURL`、`apiKeyEnv`、`headers`，以及 `opencodeSession.format.script`。导入默认会扣留这些字段，避免他人提供的文件重定向请求、挂接其凭据名称、注入原始 Header，或指定供 Host 导入并执行的本地模块。但导出文件仍按原样保存每一个值，包括放在 `headers` 里的明文 token —— 分享前请先自行检查。
+
+如果文件试图修改接线，预览会显示跳过了多少项，并提供「同时导入端点与凭据（高级）」选项。该选项每次导入都默认关闭，且不会记住上次选择。警告会列出每条受影响路由的目标端点，让你在同意前看清请求将发往哪里。
+
+还原回滚副本或应用已保存方案也遵循同一规则。如果之前通过显式选择导入过接线、现在需要还原旧端点，请在该次预览中重新勾选此选项。
+
 校验点：目标目录存在：
 
 ```bash
@@ -204,7 +243,7 @@ dsh plugin --profile <profile> add @hytime/dsh-thinking-effort
 安装指定版本：
 
 ```bash
-dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.0
+dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.1
 ```
 
 官方 CLI 会自动完成以下工作：
@@ -234,7 +273,7 @@ dsh plugin --profile <profile> update @hytime/dsh-thinking-effort
 升级到指定版本：
 
 ```bash
-dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.0
+dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.1
 ```
 
 升级后重新执行验证步骤。宿主侧代码需要重启 DSH；浏览器侧代码需要刷新 Web 页面。
@@ -254,7 +293,7 @@ github:hytime/dsh-thinking-effort
 
 ```bash
 dsh plugin --profile <profile> remove dsh-thinking-effort
-dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.0
+dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.1
 ```
 
 ### 3.2 旧依赖已被移除，但旧 bundle 残留
@@ -283,7 +322,7 @@ grep -n "dsh-thinking-effort" \
 ```bash
 dsh plugin --profile <profile> add github:hytime/dsh-thinking-effort#<old-commit>
 dsh plugin --profile <profile> remove dsh-thinking-effort
-dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.0
+dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.1
 ```
 
 这一步的目的不是继续使用旧插件，而是让官方 CLI 识别旧依赖并自动删除残留 bundle。不要手工把旧包名重新写入新的 bundle 列表。

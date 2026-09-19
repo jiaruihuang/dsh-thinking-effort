@@ -17,6 +17,10 @@ import {
   takeoverProvidersOf,
 } from '../src/compat/gateway/takeover.js'
 import { opsForProviderCompat } from '../src/compat/gateway/ops.js'
+import {
+  digestTail62 as digestTail62ForLoaderProbe,
+  normalizeSessionId as normalizeSessionIdForLoaderProbe,
+} from '../src/host/opencode-session-format.js'
 import { afterAll, describe, expect, it } from 'vitest'
 
 type PackageManifest = {
@@ -1149,7 +1153,7 @@ describe('published package composition', () => {
   it('exposes built Host and Client artifacts with declarations', () => {
     const manifest = readPackage()
 
-    expect(manifest.version).toBe('0.3.0')
+    expect(manifest.version).toBe('0.3.1')
     expect(manifest.main).toBe('./lib/index.js')
     expect(manifest.types).toBe('./lib/types/index.d.ts')
     expect(manifest.exports['.']).toEqual({
@@ -1235,7 +1239,7 @@ integrationDescribe('official DSH loader composition', () => {
     const installedDir = join(profile, 'node_modules', '@hytime', 'dsh-thinking-effort')
     const installedManifest = JSON.parse(readFileSync(join(installedDir, 'package.json'), 'utf8')) as PackageManifest
     expect(installedManifest.name).toBe('@hytime/dsh-thinking-effort')
-    expect(installedManifest.version).toBe('0.3.0')
+    expect(installedManifest.version).toBe('0.3.1')
 
     const hostEntry = join(installedDir, 'lib', 'index.js')
     const clientEntry = join(installedDir, 'lib', 'client.js')
@@ -1573,7 +1577,13 @@ integrationDescribe('official DSH loader composition', () => {
      expect(siblingRequest?.wire).toBeDefined()
      expect(otherProviderRequest?.wire).toBeDefined()
      expect(enabledRequest?.wire?.url).toBe('http://gateway.test/v1/chat/completions')
-     expect(enabledRequest?.wire?.headers['x-opencode-session']).toBe(enabledRequest?.options.sessionId)
+     // The default generator derives a `ses_` value bound to the DSH session
+     // rather than forwarding the raw id; assert the shape and that the suffix
+     // is a pure function of that session id (the hex block is minted per run).
+     const sessionHeader = enabledRequest?.wire?.headers['x-opencode-session']
+     expect(sessionHeader).toMatch(/^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$/)
+     const normalizedSessionId = normalizeSessionIdForLoaderProbe(String(enabledRequest?.options.sessionId ?? ''))
+     expect(sessionHeader?.slice(16)).toBe(digestTail62ForLoaderProbe(normalizedSessionId))
      expect(siblingRequest?.wire?.headers['x-opencode-session']).toBeUndefined()
      expect(otherProviderRequest?.wire?.headers['x-opencode-session']).toBeUndefined()
            const withoutMessageIds = (value: unknown): unknown => Array.isArray(value)

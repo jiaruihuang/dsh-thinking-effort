@@ -10,13 +10,20 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-19
+
 ### 추가
 
 - 설정 가능한 OpenCode 세션 Header 생성기(`opencodeSession.format`)를 추가했습니다. 스위치를 켜고 `format`을 설정하지 않으면 Host는 OpenCode Zen 정규 형태의 결정적 `ses_` 값을 보냅니다: `ses_` + 16진수 12자리(세션마다 한 번 주조되는 48비트 밀리초 타임스탬프) + Base62 14자리(정규화한 DSH 세션 ID의 80비트 SHA-256 다이제스트). 같은 DSH 세션 내에서 값이 일정하고, 다른 세션(각 subagent 실행 포함)마다 다르며, 14자리 접미사는 DSH 재시작 후에도 안정적입니다. 상류 형식 변경에 대응하기 위해 `ses-derive` / `passthrough` / `template` / `expression` / `script` 4가지 모드, `time: firstUse | hash` 타임스탬프 출처, `validate` / `onInvalid` 검증을 설정 문서만으로 변경할 수 있으며 코드 수정이나 재빌드가 필요 없습니다.
+- provider/model 단위 `user-agent` 재정의(`opencodeSession.userAgent`)를 추가했습니다. `llm-pi-ai` adapter가 attribution `user-agent`를 강제하고 provider 설정 값을 제거하므로, 이 플러그인은 전송 직전 마지막 레이어에서 헤더를 다시 씁니다. route 단위 `enabled`, 모델 단위 토글, 선택적 route별 `value`(마스터 값보다 우선)를 지원하며 기본값은 꺼져 있고 일치하지 않는 요청은 DSH attribution 헤더를 유지합니다.
 
 ### 변경
 
 - `x-opencode-session`의 기본값이 「원시 DSH 세션 ID」에서 「상류 준수 파생 `ses_` 값」으로 바뀌었습니다. 이전 동작이 필요하면 `format: { mode: passthrough }`를 명시적으로 설정하세요.
+
+### 보안
+
+- 설정 스냅샷을 가져올 때 provider의 `baseURL`, `apiKeyEnv`, `headers` 및 `opencodeSession.format.script`를 기본으로 적용하지 않도록 변경했습니다. 이 값들은 로컬 배포 연결 설정이므로 다른 사람이 만든 파일을 가져와도 요청 목적지를 바꾸거나 Host가 실행할 로컬 모듈을 지정할 수 없습니다. 미리보기에는 건너뛴 항목 수가 표시되며, 기본적으로 꺼져 있고 가져올 때마다 초기화되는 opt-in 스위치를 제공합니다(issue #11).
 
 ## [0.3.0] - 2026-09-16
 

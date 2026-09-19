@@ -20,6 +20,20 @@ const openCodeSessionProvider = z.object({
   models: openCodeSessionModels,
 }).default({ models: {} })
 const openCodeSessionProviders = z.dict(openCodeSessionProvider).default({})
+/**
+ * Defaults shared by the `format` section schema and the stored namespace
+ * shape, so the three literal copies stay in sync by construction.
+ */
+const OPENCODE_SESSION_FORMAT_DEFAULTS = {
+  mode: 'ses-derive',
+  time: 'firstUse',
+  template: '',
+  expression: '',
+  script: '',
+  validate: '',
+  onInvalid: 'warn',
+}
+
 const openCodeSessionFormat = z.object({
   mode: z.string().default('ses-derive'),
   time: z.string().default('firstUse'),
@@ -28,15 +42,22 @@ const openCodeSessionFormat = z.object({
   script: z.string().default(''),
   validate: z.string().default(''),
   onInvalid: z.string().default('warn'),
-}).default({
-  mode: 'ses-derive',
-  time: 'firstUse',
-  template: '',
-  expression: '',
-  script: '',
-  validate: '',
-  onInvalid: 'warn',
-})
+}).default({ ...OPENCODE_SESSION_FORMAT_DEFAULTS })
+
+/**
+ * Defaults shared by the `userAgent` section schema and the stored namespace
+ * shape (mirrors the `format` section above).
+ */
+const OPENCODE_SESSION_USER_AGENT_DEFAULTS = { value: '', providers: {} }
+
+const openCodeSessionUserAgent = z.object({
+  value: z.string().default(''),
+  providers: z.dict(z.object({
+    enabled: z.boolean().default(false),
+    value: z.string().default(''),
+    models: openCodeSessionModels,
+  }).default({ enabled: false, value: '', models: {} })).default({}),
+}).default({ ...OPENCODE_SESSION_USER_AGENT_DEFAULTS })
 
 /**
  * One stored configuration snapshot, as it appears in the settings document.
@@ -76,29 +97,19 @@ export const PLUGIN_SETTINGS_SCHEMA: z<PluginSettings> = z.object({
   opencodeSession: z.object({
     providers: openCodeSessionProviders,
     format: openCodeSessionFormat,
-  }).default({ providers: {}, format: {
-    mode: 'ses-derive',
-    time: 'firstUse',
-    template: '',
-    expression: '',
-    script: '',
-    validate: '',
-    onInvalid: 'warn',
-  } }),
+    userAgent: openCodeSessionUserAgent,
+  }).default({
+    providers: {},
+    format: { ...OPENCODE_SESSION_FORMAT_DEFAULTS },
+    userAgent: { ...OPENCODE_SESSION_USER_AGENT_DEFAULTS },
+  }),
   profiles: z.dict(configSnapshot).default({}),
   autoBackup: configSnapshot,
 }).default({
   opencodeSession: {
     providers: {},
-    format: {
-      mode: 'ses-derive',
-      time: 'firstUse',
-      template: '',
-      expression: '',
-      script: '',
-      validate: '',
-      onInvalid: 'warn',
-    },
+    format: { ...OPENCODE_SESSION_FORMAT_DEFAULTS },
+    userAgent: { ...OPENCODE_SESSION_USER_AGENT_DEFAULTS },
   },
   profiles: {},
   autoBackup: {

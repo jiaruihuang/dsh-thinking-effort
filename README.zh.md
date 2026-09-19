@@ -78,6 +78,7 @@ DSH 的 `llm-pi-ai` 适配器允许你手工声明第三方模型，但这些模
 | 模型级编辑 | 在「设置 → 模型能力与档位」中逐模型勾选档位并填写线上值；catalog/modelOverrides 和 `models[]` 模型都可编辑 compat |
 | 网关兼容配置 | 按 provider 全局或单个模型配置 15 个常用标量字段，按角色与推理、格式与输出、流式与工具、存储与缓存分组并默认收起 |
 | OpenCode 会话 Header | 按精确模型启用动态 `x-opencode-session`，默认生成与 DSH 会话绑定的确定性 `ses_` 值（提供 template / expression / script 等模式以应对上游格式变化），不保存固定 Header 值 |
+| OpenCode user-agent 覆盖 | 按 provider/model（含自定义路由）改写 `user-agent` 以模仿上游客户端，可为不同路由配置不同值；默认关闭 |
 | 网关值映射 | 例如 DSH 选择 `high` 时，实际向网关发送 `ultra` |
 | 配置备份与方案 | 把当前配置导出成 JSON 文件用于跨机器迁移；在本机保存多份命名方案并可在其中切换；导入前可选择「合并」或「替换」并预览影响范围 |
 | 子 agent 默认值 | 为未显式指定档位的子 agent 请求自动填入默认思考强度 |
@@ -108,7 +109,7 @@ dsh plugin --profile <profile> add @hytime/dsh-thinking-effort
 安装指定版本：
 
 ```bash
-dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.0
+dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.1
 ```
 
 官方 CLI 会同时更新 profile 依赖、锁文件和 `dsh.profile.bundles`，无需手工追加 YAML。
@@ -143,7 +144,7 @@ github:hytime/dsh-thinking-effort
 
 ```bash
 dsh plugin --profile <profile> remove dsh-thinking-effort
-dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.0
+dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.1
 ```
 
 如果旧依赖已经被其他工具移除，但 profile 的 bundle 列表仍残留旧名称，先从旧 profile 的 `pnpm-lock.yaml` 找到旧 GitHub commit，再使用官方命令恢复并移除：
@@ -151,7 +152,7 @@ dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.0
 ```bash
 dsh plugin --profile <profile> add github:hytime/dsh-thinking-effort#<old-commit>
 dsh plugin --profile <profile> remove dsh-thinking-effort
-dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.0
+dsh plugin --profile <profile> add @hytime/dsh-thinking-effort@0.3.1
 ```
 
 不要把 `dsh-thinking-effort` 添加到新的 `dsh.profile.bundles` 中。
@@ -211,7 +212,7 @@ providers:
 
 模型编辑器提供独立的「OpenCode 会话 Header」开关。它默认关闭，保存在插件自有的 `dsh-thinking-effort` Settings namespace 中，不写入 `llm-pi-ai.compat`。只有确实需要 `x-opencode-session` 的精确 `provider/model` 才应启用；同一路由中的其他模型（包括 GPT 模型）不会继承该设置。拨动开关即立即保存，没有单独的保存按钮；重新打开模型时显示的是已持久化的值。
 
-启用后、未配置 `format` 时，Host 会发送符合 `ses_` 规范形态、**由当前 DSH 会话确定性派生**的值：`ses_` + 12 位十六进制（48 位毫秒时间戳，会话内首次使用时铸造一次）+ 14 位 Base62（对归一化的 DSH 会话 ID 取 80 位 SHA-256 摘要）。同一 DSH 会话总是发送同一个值，不同会话（包括每次子 agent 运行）派生不同值；14 位后缀因为是派生而非存储，在 DSH 重启后依然稳定。
+启用后、未配置 `format` 时，Host 会发送符合 `ses_` 规范形态、**由当前 DSH 会话确定性派生**的值：`ses_` + 12 位十六进制（48 位毫秒时间戳，会话内首次使用时铸造一次）+ 14 位 Base62（对归一化的 DSH 会话 ID 取 80 位 SHA-256 摘要）。同一 DSH 会话总是发送同一个值：该值按会话粘性保留，有界缓存淘汰只丢弃缓存值、绝不丢弃首次铸造的铸币，因此被淘汰的会话再次访问时值仍不变；只有 DSH 重启且处于 `firstUse` 模式时才会重新铸造 hex 时间戳（`time: hash` 则完全无状态）。14 位后缀因为是派生而非存储，在 DSH 重启后依然稳定。不同会话（包括每次子 agent 运行）派生不同值。
 
 生成器在 DSH 设置文档的 `dsh-thinking-effort.opencodeSession.format` 下配置，共四档，可应对上游格式变化而无需重建插件：
 
@@ -225,6 +226,31 @@ providers:
 
 Sub2API、CPA 和其他中转服务必须保留并继续把 `x-opencode-session` 转发给 OpenCode 上游。`llm-pi-ai.providers.<route>.headers.x-opencode-session` 这类静态 route Header 不能替代本功能：它会让所有会话共用一个值，无法提供按会话路由和提示词缓存亲和性。修改 Host 后需要重启 DSH；修改 Settings 或 Client 后需要刷新 Web 页面。
 
+### OpenCode user-agent 覆盖
+
+部分上游还会校验 `user-agent` 头。`llm-pi-ai` 适配器会在每个 provider 请求上强制盖上自己的归因 `user-agent`（`deepseek-harness/…`）并删除 provider 配置的同名头，因此无法通过 DSH 本身修改。本插件在请求离开发送前的最后一层改写它——按 provider/model 生效、默认关闭：
+
+```yaml
+dsh-thinking-effort:
+  opencodeSession:
+    userAgent:
+      value: "opencode/1.18.31 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14"
+      providers:
+        opencode-go:
+          enabled: true              # 整条路由
+        sundrawnewapi-private:
+          value: "opencode/1.18.31"  # 可选的路由级值
+          models:
+            mimo-v2.5-free: true     # 精确模型
+```
+
+- `value` 是总开关：为空或缺失时全局不生效。
+- 命中判定：路由的 `enabled` 为 true（全部模型）或精确模型被开启；自定义路由直接用其 provider 名作为 key。
+- 路由自己的 `value` 优先于总 `value`。
+- 未命中的请求保持 DSH 的归因 `user-agent` 不变。
+
+它与上面的会话 Header 作用于同一请求层，可以叠加使用，两者同时开启即可完整模仿上游客户端。完整参考见 [INSTALL.zh.md](./docs/INSTALL.zh.md)；修改 Host 后需要重启 DSH。
+
 ### 配置备份与方案
 
 「配置备份与方案」卡片位于语言选择器和「子 agent 默认档位」卡片下方，可以导出当前配置、在本机保存命名方案，并导入先前导出的文件。
@@ -235,6 +261,8 @@ Sub2API、CPA 和其他中转服务必须保留并继续把 `x-opencode-session`
 4. 导入默认使用「合并」（保留文件里没有的配置）；「替换」必须显式选择，它会删除文件里没有的 provider。点击「确认导入」会先把当前配置存为「导入前的自动备份」，再写入变更；还原这份备份同样走这个预览。
 
 导出与导入复用插件现有的 Settings 通道，因此新版 Remote Settings 与旧版 `connection.api.settings` 都可以使用。结果显示某个 namespace 需要重启时，重启 DSH 后生效。
+
+导入快照时默认只迁移能力配置；provider 的 `baseURL`、`apiKeyEnv`、`headers` 与 `opencodeSession.format.script` 属于本机部署接线，需在预览中显式勾选「同时导入端点与凭据」才会生效。
 
 ### 设置页界面
 
@@ -247,7 +275,7 @@ Sub2API、CPA 和其他中转服务必须保留并继续把 `x-opencode-session`
 
 ## 工作方式
 
-- **宿主侧：** 插件读取 `llm-pi-ai` 设置，在启动和设置变更时扫描 `models` 与 `modelOverrides`，只为缺少 `reasoningEfforts` 的模型补充默认档位；同时读取模型级 OpenCode 会话设置，只在匹配的 `llm/stream` 请求中注入按 `opencodeSession.format` 生成（默认 `ses-derive`）的 `x-opencode-session`。
+- **宿主侧：** 插件读取 `llm-pi-ai` 设置，在启动和设置变更时扫描 `models` 与 `modelOverrides`，只为缺少 `reasoningEfforts` 的模型补充默认档位；同时读取模型级 OpenCode 会话设置，只在匹配的 `llm/stream` 请求中注入按 `opencodeSession.format` 生成（默认 `ses-derive`）的 `x-opencode-session`，并为 `opencodeSession.userAgent` 命中的模型改写 `user-agent`（否则会被 `llm-pi-ai` 适配器的归因头强制覆盖）。
 - **客户端：** 通过 DSH Settings Remote（`ctx.remote.settings`）注册设置页；运行时提供 `modelDirectories` 服务时，为可选 Composer `seat` 注册低优先级 `shadow` 实现，并显示宿主已解析的推理档位滑块。模型编辑器把 OpenCode 会话 Header 设置保存在插件自有 namespace，与 `llm-pi-ai.compat` 分开。四种文案分别维护在 `src/locales/zh.json`、`src/locales/en.json`、`src/locales/ja.json` 和 `src/locales/ko.json`，发布前生成到客户端 bundle。
 - **子 agent：** 默认值存储在 `llm-pi-ai` 用户层的 `subagentEffort`；`agent/request` waterfall 只对未显式指定档位的子 agent 请求进行补全。
 - **版本信息：** 设置页右下角显示当前安装版本，例如 `v0.1.14`；DSH 插件列表从已安装包的 `package.json.version` 读取同一版本。
